@@ -1,0 +1,114 @@
+#include <SPI.h>
+#include <SD.h>
+#include <DHT.h>
+
+#define SOUND_PIN 6
+#define DHT_PIN   7
+#define DHT_TYPE  DHT11
+#define SD_CS_PIN SDCARD_SS_PIN
+
+#define CLAP_ACTIVE_STATE LOW 
+
+const unsigned long clapLockout = 1000;
+const unsigned long logInterval = 2000;
+
+DHT dht(DHT_PIN, DHT_TYPE);
+File dataFile;
+
+bool logging = false;
+int lastSoundState = !CLAP_ACTIVE_STATE;
+unsigned long lastClapTime = 0;
+unsigned long lastLogTime = 0;
+
+void setup() {
+  Serial.begin(9600);
+  
+  Serial.println("Initializing...");
+
+  pinMode(SOUND_PIN, INPUT_PULLUP);
+  dht.begin();
+
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("SD Card Init Failed!");
+  } else {
+    Serial.println("SD Card Ready.");
+  }
+
+  Serial.println("SYSTEM READY: Clap to START/STOP logging.");
+}
+
+void loop() {
+  unsigned long now = millis();
+  
+  int currentSoundState = digitalRead(SOUND_PIN);
+
+  if (lastSoundState != CLAP_ACTIVE_STATE && currentSoundState == CLAP_ACTIVE_STATE) {
+    if (now - lastClapTime > clapLockout) {
+      lastClapTime = now;
+      toggleLogging(now); 
+    }
+  }
+  lastSoundState = currentSoundState;
+
+  if (logging) {
+    if (now - lastLogTime >= logInterval) {
+      lastLogTime = now;
+      logData(now);
+    }
+  }
+}
+
+void toggleLogging(unsigned long timestamp) {
+  logging = !logging;
+  
+  dataFile = SD.open("datalog.txt", FILE_WRITE);
+  
+  if (logging) {
+    Serial.println(">>> CLAP DETECTED: LOGGING STARTED");
+    if (dataFile) {
+      dataFile.print("START_LOG: ");
+      dataFile.print(timestamp / 1000.0);
+      dataFile.println(" s (Timer TC Start)");
+      dataFile.close();
+    }
+  } else {
+    Serial.println(">>> CLAP DETECTED: LOGGING STOPPED");
+    if (dataFile) {
+      dataFile.print("STOP_LOG: ");
+      dataFile.print(timestamp / 1000.0);
+      dataFile.println(" s (Timer TC Stop)");
+      dataFile.println("--------------------------------");
+      dataFile.close();
+    }
+  }
+}
+
+void logData(unsigned long timestamp) {
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  if (isnan(t) || isnan(h)) {
+    Serial.println("DHT Sensor Error!");
+    return;
+  }
+
+  Serial.print("Time: ");
+  Serial.print(timestamp / 1000.0);
+  Serial.print("s | Temp: ");
+  Serial.print(t);
+  Serial.print("C | Hum: ");
+  Serial.print(h);
+  Serial.println("%");
+
+  dataFile = SD.open("datalog.txt", FILE_WRITE);
+  if (dataFile) {
+    dataFile.print(timestamp / 1000.0);
+    dataFile.print(",");
+    dataFile.print(t);
+    dataFile.print(",");
+    dataFile.println(h);
+    dataFile.close();
+  } else {
+    Serial.println("Error opening datalog.txt");
+  }
+}
